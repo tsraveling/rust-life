@@ -1,144 +1,138 @@
-use std::io;
+use std::time::{Duration, Instant};
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
+use anyhow::Result;
+use crossterm::{
+    event::{self, Event, KeyCode},
+    execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+};
 use ratatui::{
-    DefaultTerminal, Frame,
-    buffer::Buffer,
-    layout::Rect,
-    style::Stylize,
-    symbols::border,
-    text::{Line, Text},
-    widgets::{Block, Paragraph, Widget},
+    Terminal,
+    backend::CrosstermBackend,
+    layout::{Alignment, Constraint, Direction, Layout},
+    style::{Color, Style},
+    widgets::{Block, Borders, Paragraph},
 };
 
-fn main() -> io::Result<()> {
-    ratatui::run(|terminal| App::default().run(terminal))
+const TICK_RATE: Duration = Duration::from_millis(500);
+
+// SECTION: Model
+
+struct LifeViewModel {
+    counter: u64,
 }
 
-#[derive(Debug, Default)]
-pub struct App {
-    counter: u8,
-    exit: bool,
+impl LifeViewModel {
+    fn new() -> Self {
+        Self { counter: 0 }
+    }
 }
 
-impl App {
-    /// runs the application's main loop until the user quits
-    pub fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
-        while !self.exit {
-            terminal.draw(|frame| self.draw(frame))?;
-            self.handle_events()?;
+// SECTION: Update
+
+enum Msg {
+    Tick,
+    Quit,
+}
+
+/// Returns `false` when the app should exit.
+fn update(model: &mut LifeViewModel, msg: Msg) -> bool {
+    match msg {
+        Msg::Tick => {
+            model.counter += 1;
+            true
         }
-        Ok(())
+        Msg::Quit => false,
     }
+}
 
-    fn draw(&self, frame: &mut Frame) {
-        frame.render_widget(self, frame.area());
-    }
+// SECTION: View
 
-    /// updates the application's state based on user input
-    fn handle_events(&mut self) -> io::Result<()> {
-        match event::read()? {
-            // it's important to check that the event is a key press event as
-            // crossterm also emits key release and repeat events on Windows.
-            Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
-                self.handle_key_event(key_event)
+fn view(f: &mut ratatui::Frame, model: &LifeViewModel) {
+    let area = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(40),
+            Constraint::Length(5),
+            Constraint::Min(0),
+        ])
+        .split(f.area());
+
+    let block = Block::default()
+        .title(" Life Counter ")
+        .borders(Borders::ALL)
+        .style(Style::default().fg(Color::Cyan));
+
+    let text = format!("Count: {}\n\nPress [q] to quit", model.counter);
+    let para = Paragraph::new(text)
+        .block(block)
+        .alignment(Alignment::Center);
+
+    // This is a ratatui method that actually renders the frame to the buffer.
+    f.render_widget(para, area[1]);
+}
+
+// SECTION: Main
+
+fn main() -> Result<()> {
+    // Setup terminal with raw mode: gives us more precise control over inputs etc.
+    // Also disables ctrl+c so you would have to support that manually.
+    enable_raw_mode()?;
+
+    // Enters TUI "alternate screen" aka full screen mode.
+    let mut stdout = std::io::stdout();
+    execute!(stdout, EnterAlternateScreen)?;
+
+    // These connect us to the actual terminal so we can do stuff there
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+
+    // Builds our TEA model
+    let mut model = LifeViewModel::new();
+    let mut last_tick = Instant::now();
+
+    loop {
+        // Draw:
+        // This syntax basically passes a closure that operates on frame f, in this
+        // case our view method above. The question mark basically is Rust's way of
+        // saying "if this fails, throw the error to Result above (if err { return err})"
+        terminal.draw(|f| view(f, &model))?;
+
+        // Poll for input, sleeping at most until the next tick
+        let timeout = TICK_RATE.saturating_sub(last_tick.elapsed());
+        if event::poll(timeout)?
+            && let Event::Key(key) = event::read()?
+        {
+            // This bit translates key presses into explicit messages;
+            // in future I might just pass em directly.
+            let msg = match key.code {
+                KeyCode::Char('q') => Msg::Quit,
+                _ => continue,
+            };
+            if !update(&mut model, msg) {
+                break;
             }
-            _ => {}
-        };
-        Ok(())
-    }
+        }
 
-    fn handle_key_event(&mut self, key_event: KeyEvent) {
-        match key_event.code {
-            KeyCode::Char('q') => self.exit(),
-            KeyCode::Left => self.decrement_counter(),
-            KeyCode::Right => self.increment_counter(),
-            _ => {}
+        // Fire a tick when the interval elapses
+        if last_tick.elapsed() >= TICK_RATE {
+            if !update(&mut model, Msg::Tick) {
+                break;
+            }
+            last_tick = Instant::now();
         }
     }
 
-    fn exit(&mut self) {
-        self.exit = true;
-    }
+    // Relinquish total control over inputs
+    disable_raw_mode()?;
 
-    fn increment_counter(&mut self) {
-        self.counter += 1;
-    }
+    // Exit alt mode
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
 
-    fn decrement_counter(&mut self) {
-        self.counter -= 1;
-    }
-}
+    // Return control to term
+    terminal.show_cursor()?;
 
-impl Widget for &App {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        let title = Line::from(" Counter App Tutorial ".bold());
-        let instructions = Line::from(vec![
-            " Decrement ".into(),
-            "<Left>".blue().bold(),
-            " Increment ".into(),
-            "<Right>".blue().bold(),
-            " Quit ".into(),
-            "<Q> ".blue().bold(),
-        ]);
-        let block = Block::bordered()
-            .title(title.centered())
-            .title_bottom(instructions.centered())
-            .border_set(border::THICK);
-
-        let counter_text = Text::from(vec![Line::from(vec![
-            "Value: ".into(),
-            self.counter.to_string().yellow(),
-        ])]);
-
-        Paragraph::new(counter_text)
-            .centered()
-            .block(block)
-            .render(area, buf);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ratatui::style::Style;
-
-    #[test]
-    fn render() {
-        let app = App::default();
-        let mut buf = Buffer::empty(Rect::new(0, 0, 50, 4));
-
-        app.render(buf.area, &mut buf);
-
-        let mut expected = Buffer::with_lines(vec![
-            "┏━━━━━━━━━━━━━ Counter App Tutorial ━━━━━━━━━━━━━┓",
-            "┃                    Value: 0                    ┃",
-            "┃                                                ┃",
-            "┗━ Decrement <Left> Increment <Right> Quit <Q> ━━┛",
-        ]);
-        let title_style = Style::new().bold();
-        let counter_style = Style::new().yellow();
-        let key_style = Style::new().blue().bold();
-        expected.set_style(Rect::new(14, 0, 22, 1), title_style);
-        expected.set_style(Rect::new(28, 1, 1, 1), counter_style);
-        expected.set_style(Rect::new(13, 3, 6, 1), key_style);
-        expected.set_style(Rect::new(30, 3, 7, 1), key_style);
-        expected.set_style(Rect::new(43, 3, 4, 1), key_style);
-
-        assert_eq!(buf, expected);
-    }
-
-    #[test]
-    fn handle_key_event() {
-        let mut app = App::default();
-        app.handle_key_event(KeyCode::Right.into());
-        assert_eq!(app.counter, 1);
-
-        app.handle_key_event(KeyCode::Left.into());
-        assert_eq!(app.counter, 0);
-
-        let mut app = App::default();
-        app.handle_key_event(KeyCode::Char('q').into());
-        assert!(app.exit);
-    }
+    // It all worked, boss!
+    // () is Rust "unit type", it's basically an empty thing, "nothing to add here."
+    Ok(())
 }
