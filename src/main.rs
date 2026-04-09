@@ -12,9 +12,8 @@ use crossterm::{
 use ratatui::{
     Terminal,
     backend::CrosstermBackend,
-    layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Style},
-    widgets::{Block, Borders, Paragraph},
+    widgets::Paragraph,
 };
 
 const TICK_RATE: Duration = Duration::from_millis(500);
@@ -29,9 +28,13 @@ struct LifeViewModel {
 
 impl LifeViewModel {
     fn new(w: usize, h: usize) -> Self {
+        // Add some startup noise
+        let mut g = Grid::new(w, h);
+        g.add_noise();
+        g.add_noise();
         Self {
             counter: 0,
-            current: Grid::new(w, h),
+            current: g,
             next: Grid::new(w, h),
         }
     }
@@ -42,6 +45,7 @@ impl LifeViewModel {
 enum Msg {
     Tick,
     Quit,
+    Noise,
 }
 
 /// Returns `false` when the app should exit.
@@ -49,10 +53,15 @@ fn update(model: &mut LifeViewModel, msg: Msg) -> bool {
     match msg {
         Msg::Tick => {
             // Logic
-            // STUB: Just flip the grid for now
             for x in 0..model.current.width {
                 for y in 0..model.current.height {
-                    model.next.set(x, y, !model.current.get(x, y))
+                    let was_alive = model.current.get(x, y);
+                    let n = model.current.neighbor_count(x, y);
+
+                    // This line here is the entirety of Conway's Game of Life!
+                    let alive = (was_alive && n == 2) || n == 3;
+
+                    model.next.set(x, y, alive)
                 }
             }
 
@@ -64,6 +73,10 @@ fn update(model: &mut LifeViewModel, msg: Msg) -> bool {
             true
         }
         Msg::Quit => false,
+        Msg::Noise => {
+            model.current.add_noise();
+            true
+        }
     }
 }
 
@@ -84,42 +97,39 @@ fn view(f: &mut ratatui::Frame, model: &LifeViewModel) {
     f.render_widget(para, f.area());
 }
 
-// SECTION: Main
+// SECTION: Terminal setup/teardown
 
-fn main() -> Result<()> {
-    // Setup terminal with raw mode: gives us more precise control over inputs etc.
-    // Also disables ctrl+c so you would have to support that manually.
+fn setup_terminal() -> Result<Terminal<CrosstermBackend<std::io::Stdout>>> {
     enable_raw_mode()?;
-
-    // Enters TUI "alternate screen" aka full screen mode.
     let mut stdout = std::io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
-
-    // These connect us to the actual terminal so we can do stuff there
     let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
+    Ok(Terminal::new(backend)?)
+}
 
-    // Builds our TEA model
+/// Ditch cleanup errors, just restore the terminal so we can print out the relevant stuff
+fn restore_terminal() {
+    let _ = disable_raw_mode();
+    let _ = execute!(std::io::stdout(), LeaveAlternateScreen);
+}
+
+// SECTION: Main loop
+
+fn run(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result<()> {
     let (w, h) = crossterm::terminal::size()?;
     let mut model = LifeViewModel::new(w.into(), h.into());
     let mut last_tick = Instant::now();
 
     loop {
-        // Draw:
-        // This syntax basically passes a closure that operates on frame f, in this
-        // case our view method above. The question mark basically is Rust's way of
-        // saying "if this fails, throw the error to Result above (if err { return err})"
         terminal.draw(|f| view(f, &model))?;
 
-        // Poll for input, sleeping at most until the next tick
         let timeout = TICK_RATE.saturating_sub(last_tick.elapsed());
         if event::poll(timeout)?
             && let Event::Key(key) = event::read()?
         {
-            // This bit translates key presses into explicit messages;
-            // in future I might just pass em directly.
             let msg = match key.code {
                 KeyCode::Char('q') => Msg::Quit,
+                KeyCode::Char('a') => Msg::Noise,
                 _ => continue,
             };
             if !update(&mut model, msg) {
@@ -127,7 +137,6 @@ fn main() -> Result<()> {
             }
         }
 
-        // Fire a tick when the interval elapses
         if last_tick.elapsed() >= TICK_RATE {
             if !update(&mut model, Msg::Tick) {
                 break;
@@ -136,16 +145,21 @@ fn main() -> Result<()> {
         }
     }
 
-    // Relinquish total control over inputs
-    disable_raw_mode()?;
-
-    // Exit alt mode
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-
-    // Return control to term
-    terminal.show_cursor()?;
-
-    // It all worked, boss!
-    // () is Rust "unit type", it's basically an empty thing, "nothing to add here."
     Ok(())
+}
+
+// SECTION: Main
+
+fn main() -> Result<()> {
+    // Install panic hook so terminal restores even on panic
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        restore_terminal();
+        default_hook(info);
+    }));
+
+    let mut terminal = setup_terminal()?;
+    let result = run(&mut terminal);
+    restore_terminal();
+    result
 }

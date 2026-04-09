@@ -1,3 +1,8 @@
+const NOISE_AMT: f32 = 0.1f32;
+
+use rand::rng;
+use rand::seq::index::sample;
+
 pub struct Grid {
     data: Vec<bool>,
     pub width: usize,
@@ -13,29 +18,38 @@ impl Grid {
         }
     }
 
-    pub fn get(&self, row: usize, col: usize) -> bool {
-        self.data[row * self.width + col]
+    pub fn get(&self, x: usize, y: usize) -> bool {
+        self.data[y * self.width + x]
     }
 
-    pub fn set(&mut self, row: usize, col: usize, val: bool) {
-        self.data[row * self.width + col] = val;
+    pub fn set(&mut self, x: usize, y: usize, val: bool) {
+        self.data[y * self.width + x] = val;
     }
 
-    pub fn neighbor_count(&self, row: usize, col: usize) -> u8 {
+    pub fn add_noise(&mut self) {
+        let total = self.width * self.height;
+        let amt: usize = (total as f32 * NOISE_AMT) as usize;
+        let indices = sample(&mut rng(), total, amt);
+        for i in indices {
+            self.data[i] = true;
+        }
+    }
+
+    pub fn neighbor_count(&self, ax: usize, ay: usize) -> u8 {
         let mut count = 0;
         // iterate from -1 as an i2, to 1. =1 means also include 1 itself.
-        for dr in -1i32..=1 {
-            for dc in -1i32..=1 {
-                if dr == 0 && dc == 0 {
+        for x in -1..=1 {
+            for y in -1..=1 {
+                if x == 0 && y == 0 {
                     continue;
                 }
-                let r = row as i32 + dr;
-                let c = col as i32 + dc;
-                if r >= 0
-                    && r < self.height as i32
-                    && c >= 0
-                    && c < self.width as i32
-                    && self.get(r as usize, c as usize)
+                let gx = x + ax as isize;
+                let gy = y + ay as isize;
+                if gx >= 0
+                    && gy > 0
+                    && gx < self.width as isize
+                    && gy < self.height as isize
+                    && self.get(gx as usize, gy as usize)
                 {
                     count += 1;
                 }
