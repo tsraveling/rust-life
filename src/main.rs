@@ -1,5 +1,8 @@
+mod grid;
+
 use std::time::{Duration, Instant};
 
+use crate::grid::Grid;
 use anyhow::Result;
 use crossterm::{
     event::{self, Event, KeyCode},
@@ -20,11 +23,17 @@ const TICK_RATE: Duration = Duration::from_millis(500);
 
 struct LifeViewModel {
     counter: u64,
+    current: Grid,
+    next: Grid,
 }
 
 impl LifeViewModel {
-    fn new() -> Self {
-        Self { counter: 0 }
+    fn new(w: usize, h: usize) -> Self {
+        Self {
+            counter: 0,
+            current: Grid::new(w, h),
+            next: Grid::new(w, h),
+        }
     }
 }
 
@@ -88,7 +97,8 @@ fn main() -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     // Builds our TEA model
-    let mut model = LifeViewModel::new();
+    let (w, h) = crossterm::terminal::size()?;
+    let mut model = LifeViewModel::new(w.into(), h.into());
     let mut last_tick = Instant::now();
 
     loop {
