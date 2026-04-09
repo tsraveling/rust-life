@@ -1,7 +1,7 @@
 pub struct Grid {
     data: Vec<bool>,
-    width: usize,
-    height: usize,
+    pub width: usize,
+    pub height: usize,
 }
 
 impl Grid {

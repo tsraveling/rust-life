@@ -48,6 +48,18 @@ enum Msg {
 fn update(model: &mut LifeViewModel, msg: Msg) -> bool {
     match msg {
         Msg::Tick => {
+            // Logic
+            // STUB: Just flip the grid for now
+            for x in 0..model.current.width {
+                for y in 0..model.current.height {
+                    model.next.set(x, y, !model.current.get(x, y))
+                }
+            }
+
+            // Finally, swap the buffers
+            std::mem::swap(&mut model.current, &mut model.next);
+
+            // Meta
             model.counter += 1;
             true
         }
@@ -58,27 +70,18 @@ fn update(model: &mut LifeViewModel, msg: Msg) -> bool {
 // SECTION: View
 
 fn view(f: &mut ratatui::Frame, model: &LifeViewModel) {
-    let area = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage(40),
-            Constraint::Length(5),
-            Constraint::Min(0),
-        ])
-        .split(f.area());
-
-    let block = Block::default()
-        .title(" Life Counter ")
-        .borders(Borders::ALL)
-        .style(Style::default().fg(Color::Cyan));
-
-    let text = format!("Count: {}\n\nPress [q] to quit", model.counter);
-    let para = Paragraph::new(text)
-        .block(block)
-        .alignment(Alignment::Center);
+    let mut lines = String::new();
+    for y in 0..model.current.height {
+        for x in 0..model.current.width {
+            let val = model.current.get(x, y);
+            lines.push(if val { 'X' } else { ' ' });
+        }
+        lines.push('\n');
+    }
+    let para = Paragraph::new(lines).style(Style::default().fg(Color::Yellow));
 
     // This is a ratatui method that actually renders the frame to the buffer.
-    f.render_widget(para, area[1]);
+    f.render_widget(para, f.area());
 }
 
 // SECTION: Main
