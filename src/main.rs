@@ -83,17 +83,16 @@ fn update(model: &mut LifeViewModel, msg: Msg) -> bool {
 // SECTION: View
 
 fn view(f: &mut ratatui::Frame, model: &LifeViewModel) {
-    let mut lines = String::new();
-    for y in 0..model.current.height {
-        for x in 0..model.current.width {
-            let val = model.current.get(x, y);
-            lines.push(if val { 'X' } else { ' ' });
-        }
-        lines.push('\n');
-    }
-    let para = Paragraph::new(lines).style(Style::default().fg(Color::Yellow));
+    let lines: Vec<ratatui::text::Line> = (0..model.current.height)
+        .map(|y| {
+            let content: String = (0..model.current.width)
+                .map(|x| if model.current.get(x, y) { 'X' } else { ' ' })
+                .collect();
+            ratatui::text::Line::from(content)
+        })
+        .collect();
 
-    // This is a ratatui method that actually renders the frame to the buffer.
+    let para = Paragraph::new(lines).style(Style::default().fg(Color::Yellow));
     f.render_widget(para, f.area());
 }
 
